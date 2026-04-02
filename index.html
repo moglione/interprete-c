@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>C-IDE — Intérprete Educativo</title>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <script type="importmap">
+  {
+    "imports": {
+      "codemirror/state":       "https://esm.sh/@codemirror/state@6",
+      "codemirror/view":        "https://esm.sh/@codemirror/view@6",
+      "codemirror/commands":    "https://esm.sh/@codemirror/commands@6",
+      "codemirror/language":    "https://esm.sh/@codemirror/language@6",
+      "codemirror/autocomplete":"https://esm.sh/@codemirror/autocomplete@6",
+      "codemirror/lang-cpp":    "https://esm.sh/@codemirror/lang-cpp@6",
+      "codemirror/theme-one-dark": "https://esm.sh/@codemirror/theme-one-dark@6"
+    }
+  }
+  </script>
+
+  <style>
+    :root {
+      --bg-editor:   #1e1e1e;
+      --bg-sidebar:  #252526;
+      --bg-menu:     #323233;
+      --bg-status:   #007acc;
+      --bg-active:   #37373d;
+      --border:      #454545;
+      --text:        #cccccc;
+      --text-dim:    #969696;
+      --accent:      #007acc;
+      --green:       #4ec9b0;
+      --red:         #f48771;
+      --font-ui:     'Inter', system-ui, sans-serif;
+      --font-mono:   'JetBrains Mono', monospace;
+    }
+
+    body[data-theme="light"] {
+      --bg-editor:   #ffffff;
+      --bg-sidebar:  #f3f3f3;
+      --bg-menu:     #ececec;
+      --bg-status:   #007acc;
+      --bg-active:   #dcdcdc;
+      --border:      #d0d0d0;
+      --text:        #1f1f1f;
+      --text-dim:    #616161;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { height: 100vh; display: grid; grid-template-rows: auto auto 1fr auto; background: var(--bg-editor); color: var(--text); font-family: var(--font-ui); overflow: hidden; }
+
+    /* ── Menubar ── */
+    .menubar { background: var(--bg-menu); height: 35px; display: flex; align-items: center; padding: 0 10px; font-size: 13px; z-index: 100; }
+    .menu-item { padding: 0 12px; height: 100%; display: flex; align-items: center; cursor: pointer; position: relative; }
+    .menu-item:hover { background: var(--bg-active); }
+    .dropdown { position: absolute; top: 100%; left: 0; background: var(--bg-menu); min-width: 200px; border: 1px solid var(--border); box-shadow: 0 4px 8px rgba(0,0,0,0.3); display: none; padding: 5px 0; }
+    .menu-item:hover > .dropdown { display: block; }
+    .dropdown-item { position: relative; padding: 6px 16px; color: var(--text); display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+    .dropdown-item:hover { background: var(--accent); color: white; }
+    .dropdown-item .shortcut { color: var(--text-dim); font-size: 11px; margin-left: 20px; }
+
+    /* ── Toolbar ── */
+    .toolbar { background: var(--bg-sidebar); height: 40px; border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 15px; gap: 8px; }
+    .tool-btn { background: transparent; border: none; padding: 6px; cursor: pointer; color: var(--text-dim); border-radius: 4px; display: flex; align-items: center; }
+    .tool-btn:hover { background: var(--bg-active); color: var(--text); }
+    .tool-btn svg { width: 18px; height: 18px; }
+    .tool-btn.run { color: #89d185; }
+    .tool-btn.text-zoom { font-size: 14px; font-weight: 600; min-width: 30px; justify-content: center; }
+    .toolbar-sep { width: 1px; height: 20px; background: var(--border); margin: 0 5px; }
+
+    /* ── Workspace ── */
+    .workspace { display: grid; grid-template-columns: 1fr 4px 1fr; min-height: 0; }
+    
+    .resizer {
+      width: 4px;
+      height: 100%;
+      background: var(--border);
+      cursor: col-resize;
+      transition: background 0.1s;
+      z-index: 50;
+    }
+    .resizer:hover, .resizer.dragging {
+      background: var(--accent);
+    }
+
+    .panel { display: flex; flex-direction: column; min-height: 0; border-right: none; }
+    .panel-tabs { background: var(--bg-sidebar); height: 35px; display: flex; border-bottom: 1px solid var(--border); }
+    .tab { padding: 0 20px; display: flex; align-items: center; gap: 8px; background: var(--bg-sidebar); border-right: 1px solid var(--border); font-size: 12px; height: 100%; position: relative; }
+    .tab.active { background: var(--bg-editor); border-bottom: 1px solid var(--accent); }
+    .tab-close { opacity: 0; font-size: 10px; cursor: pointer; user-select: none; }
+    .tab:hover .tab-close { opacity: 1; }
+    .tab-rename-input {
+      width: 120px;
+      border: 1px solid var(--accent);
+      background: var(--bg-editor);
+      color: var(--text);
+      font: inherit;
+      padding: 2px 6px;
+      border-radius: 4px;
+      outline: none;
+    }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    }
+    .modal-backdrop.show { display: flex; }
+    .modal-card {
+      width: min(420px, calc(100vw - 32px));
+      background: var(--bg-editor);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.4);
+      padding: 18px;
+    }
+    .modal-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    .modal-message {
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--text-dim);
+      margin-bottom: 18px;
+      white-space: pre-wrap;
+      max-height: 40vh;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(120, 120, 120, 0.7) transparent;
+    }
+    .modal-message::-webkit-scrollbar {
+      width: 12px;
+      height: 10px;
+    }
+    .modal-message::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.12);
+    }
+    .modal-message::-webkit-scrollbar-thumb {
+      background: rgba(120, 120, 120, 0.7);
+      border-radius: 999px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    .modal-message::-webkit-scrollbar-thumb:hover {
+      background: rgba(145, 145, 145, 0.9);
+    }
+    body[data-theme="light"] .modal-message {
+      scrollbar-color: rgba(90, 90, 90, 0.55) transparent;
+    }
+    body[data-theme="light"] .modal-message::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.08);
+    }
+    body[data-theme="light"] .modal-message::-webkit-scrollbar-thumb {
+      background: rgba(90, 90, 90, 0.55);
+    }
+    body[data-theme="light"] .modal-message::-webkit-scrollbar-thumb:hover {
+      background: rgba(70, 70, 70, 0.75);
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .modal-actions button {
+      min-width: 92px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg-sidebar);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .modal-actions button.modal-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .modal-actions button.is-hidden {
+      display: none;
+    }
+
+    #editor-container { flex: 1; overflow: hidden; }
+    .cm-editor { height: 100%; }
+    .cm-scroller {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(120, 120, 120, 0.7) transparent;
+      scrollbar-gutter: stable;
+      overscroll-behavior: contain;
+    }
+    .cm-scroller::-webkit-scrollbar {
+      width: 12px;
+      height: 10px;
+    }
+    .cm-scroller::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.12);
+    }
+    .cm-scroller::-webkit-scrollbar-thumb {
+      background: rgba(120, 120, 120, 0.7);
+      border-radius: 999px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    .cm-scroller::-webkit-scrollbar-thumb:hover {
+      background: rgba(145, 145, 145, 0.9);
+    }
+    body[data-theme="light"] .cm-scroller {
+      scrollbar-color: rgba(90, 90, 90, 0.55) transparent;
+    }
+    body[data-theme="light"] .cm-scroller::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.08);
+    }
+    body[data-theme="light"] .cm-scroller::-webkit-scrollbar-thumb {
+      background: rgba(90, 90, 90, 0.55);
+    }
+    body[data-theme="light"] .cm-scroller::-webkit-scrollbar-thumb:hover {
+      background: rgba(70, 70, 70, 0.75);
+    }
+
+    /* ── Output Column (HUD) ── */
+    .output-column { display: grid; grid-template-areas: "stack"; min-height: 0; position: relative; }
+    .graphics-panel { grid-area: stack; z-index: 1; background: #000; visibility: hidden; opacity: 0; transition: opacity 0.3s; }
+    .output-column.has-graphics .graphics-panel { visibility: visible; opacity: 1; }
+    #canvas-container { width: 100%; height: 100%; position: relative; }
+    #main-canvas { position: absolute; top:0; left:0; width: 100%; height: 100%; object-fit: contain; object-position: left top; }
+
+    .console-panel { grid-area: stack; z-index: 2; display: flex; flex-direction: column; background: rgba(30,30,30,0.7); min-height: 0; }
+    body[data-theme="light"] .console-panel { background: rgba(255,255,255,0.86); }
+    .console-header { padding: 8px 16px; background: var(--bg-sidebar); border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-dim); display:flex; justify-content: space-between; align-items: center;}
+    #console-output { flex: 1; min-height: 0; padding: 12px 14px 12px 12px; overflow-y: scroll; scrollbar-gutter: stable; overscroll-behavior: contain; font-family: var(--font-mono); font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: var(--text); text-shadow: 0 1px 2px rgba(0,0,0,0.8); cursor: text; }
+    body[data-theme="light"] #console-output { text-shadow: none; }
+    #console-output {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(120, 120, 120, 0.7) transparent;
+    }
+    #console-output::-webkit-scrollbar {
+      width: 12px;
+      height: 10px;
+    }
+    #console-output::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.12);
+    }
+    #console-output::-webkit-scrollbar-thumb {
+      background: rgba(120, 120, 120, 0.7);
+      border-radius: 999px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    #console-output::-webkit-scrollbar-thumb:hover {
+      background: rgba(145, 145, 145, 0.9);
+    }
+    body[data-theme="light"] #console-output {
+      scrollbar-color: rgba(90, 90, 90, 0.55) transparent;
+    }
+    body[data-theme="light"] #console-output::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.08);
+    }
+    body[data-theme="light"] #console-output::-webkit-scrollbar-thumb {
+      background: rgba(90, 90, 90, 0.55);
+    }
+    body[data-theme="light"] #console-output::-webkit-scrollbar-thumb:hover {
+      background: rgba(70, 70, 70, 0.75);
+    }
+    
+    #stdin-panel { display:none; align-items:center; background: var(--bg-sidebar); border-top: 1px solid var(--border); padding: 8px 12px; visibility: hidden; }
+    .stdin-prompt { color: var(--green); margin-right: 8px; font-family: var(--font-mono); font-size: 12px; }
+    #stdin-input { flex:1; background:transparent; border:none; border-bottom: 1px solid var(--border); color: var(--green); font-family: var(--font-mono); outline: none; }
+
+    /* ── Status Bar ── */
+    .statusbar { background: var(--bg-status); height: 22px; display: flex; align-items: center; padding: 0 10px; font-size: 12px; color: white; justify-content: space-between; }
+    .status-left, .status-right { display: flex; gap: 15px; }
+
+    .console-info { color: #969696; font-style: italic; }
+    .console-error { color: #f48771; }
+    .console-stdin { color: #4ec9b0; }
+    .console-input-line { display: inline; }
+    .console-inline-input { min-width: 1ch; background: transparent; border: none; outline: none; color: var(--green); font: inherit; text-shadow: inherit; caret-color: var(--green); }
+
+    /* Dropdown sub-menus (Examples) */
+    .dropdown .submenu-trigger::after { content: '▶'; font-size: 8px; position: absolute; right: 10px; }
+    .submenu { position: absolute; left: 100%; top: -6px; background: var(--bg-menu); border: 1px solid var(--border); display: none; min-width: 180px; padding: 5px 0; margin-left: -1px; }
+    .dropdown-item:hover > .submenu { display: block; }
+  </style>
+</head>
+<body>
+
+<nav class="menubar">
+  <div class="menu-item">Archivo
+    <div class="dropdown">
+      <div class="dropdown-item" id="btn-new">Nuevo <span class="shortcut">Ctrl+N</span></div>
+      <div class="dropdown-item" id="btn-open">Abrir... <span class="shortcut">Ctrl+O</span></div>
+      <div class="dropdown-item" id="btn-save">Guardar <span class="shortcut">Ctrl+S</span></div>
+      <div class="dropdown-item" id="btn-save-as">Guardar como...</div>
+      <div class="toolbar-sep" style="width: 100%; height: 1px; margin: 4px 0;"></div>
+      <div class="dropdown-item submenu-trigger">Ejemplos
+        <div class="submenu">
+          <div class="dropdown-item submenu-trigger">Básicos
+            <div class="submenu">
+              <div class="dropdown-item" data-example="basicos/hola_mundo">Hola Mundo</div>
+              <div class="dropdown-item" data-example="basicos/factorial">Factorial</div>
+              <div class="dropdown-item" data-example="basicos/fibonacci">Fibonacci</div>
+            </div>
+          </div>
+          <div class="dropdown-item submenu-trigger">Avanzados
+            <div class="submenu">
+              <div class="dropdown-item" data-example="avanzados/burbuja">Bubble Sort</div>
+              <div class="dropdown-item" data-example="avanzados/punteros">Punteros</div>
+              <div class="dropdown-item" data-example="avanzados/strings">Strings</div>
+              <div class="dropdown-item" data-example="avanzados/scanf_demo">scanf demo</div>
+            </div>
+          </div>
+          <div class="dropdown-item submenu-trigger">Gráficos
+            <div class="submenu">
+              <div class="dropdown-item" data-example="graficos/tortuga_demo">Tortuga (Logo)</div>
+              <div class="dropdown-item" data-example="graficos/processing_demo">Processing (2D)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="toolbar-sep" style="width: 100%; height: 1px; margin: 4px 0;"></div>
+      <div class="dropdown-item" id="menu-run">Ejecutar <span class="shortcut">F5</span></div>
+      <div class="dropdown-item" id="menu-compile">Compilar</div>
+    </div>
+  </div>
+  <div class="menu-item">Editar
+    <div class="dropdown">
+      <div class="dropdown-item" id="btn-clear">Limpiar Consola <span class="shortcut">Ctrl+L</span></div>
+      <div class="dropdown-item">Deshacer <span class="shortcut">Ctrl+Z</span></div>
+      <div class="dropdown-item">Rehacer <span class="shortcut">Ctrl+Y</span></div>
+    </div>
+  </div>
+  <div class="menu-item">Ver</div>
+  <div class="menu-item">Ejecutar</div>
+  <div class="menu-item">Ayuda</div>
+</nav>
+
+<div class="toolbar">
+  <button class="tool-btn run" id="btn-run" title="Ejecutar (F5)">
+    <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+  </button>
+  <button class="tool-btn text-zoom" id="btn-compile" title="Compilar HTML">JS</button>
+  <button class="tool-btn" id="btn-stop" title="Detener (Shift+F5)" disabled>
+    <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>
+  </button>
+  <div class="toolbar-sep"></div>
+  <button class="tool-btn" id="btn-clear-tool" title="Limpiar Consola">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+  </button>
+  <div class="toolbar-sep"></div>
+  <button class="tool-btn text-zoom" id="btn-font-dec" title="Reducir tipografía del editor">A-</button>
+  <button class="tool-btn text-zoom" id="btn-font-inc" title="Aumentar tipografía del editor">A+</button>
+  <div class="toolbar-sep"></div>
+  <button class="tool-btn text-zoom" id="btn-theme-toggle" title="Cambiar tema">T</button>
+  <div class="toolbar-sep"></div>
+  <button class="tool-btn" title="Buscar...">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+  </button>
+</div>
+
+<main class="workspace" id="workspace">
+  <section class="panel">
+    <div class="panel-tabs" id="file-tabs">
+      <div class="tab active">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#51a1ee" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        main.c
+        <span class="tab-close">✕</span>
+      </div>
+    </div>
+  <div id="editor-container"></div>
+  <input type="file" id="file-input" style="display: none;" accept=".c,.h,.txt">
+</section>
+
+  <div class="resizer" id="resizer"></div>
+
+  <section class="output-column" id="output-column">
+    <div class="graphics-panel" id="graphics-panel">
+      <div id="canvas-container">
+        <canvas id="main-canvas" width="1000" height="1000"></canvas>
+      </div>
+    </div>
+    <div class="console-panel">
+      <div class="console-header">
+        CONSOLA / SALIDA
+        <span id="close-console" style="cursor:pointer">✕</span>
+      </div>
+      <pre id="console-output"></pre>
+      <div id="stdin-panel">
+        <span class="stdin-prompt">stdin ></span>
+        <input type="text" id="stdin-input" placeholder="Escribe aquí..." autocomplete="off">
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="statusbar">
+  <div class="status-left">
+    <span>↓ Main</span>
+    <span id="status-errors">0 Errores</span>
+    <span id="status-warnings">0 Advertencias</span>
+  </div>
+  <div class="status-right">
+    <span id="cursor-pos">Lín 1, Col 1</span>
+    <span>Espacios: 4</span>
+    <span>UTF-8</span>
+    <span>C99</span>
+  </div>
+</footer>
+
+<div class="modal-backdrop" id="app-modal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="app-modal-title">
+    <div class="modal-title" id="app-modal-title">Confirmar</div>
+    <div class="modal-message" id="app-modal-message"></div>
+    <div class="modal-actions">
+      <button type="button" id="app-modal-cancel">Cancelar</button>
+      <button type="button" id="app-modal-ok" class="modal-primary">Aceptar</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
